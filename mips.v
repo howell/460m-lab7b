@@ -202,6 +202,12 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                     `MULT: begin
                         Op <= op_mult;
                     end
+                    `MFHI: begin
+                        Op <= op_mfhi;
+                    end
+                    `MFLO: begin
+                        Op <= op_mflo;
+                    end
                     default: begin
                     end
                     endcase
@@ -289,6 +295,12 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                 end
                 op_mult: begin
                    rMULT_Result = ALU_InA * ALU_InB; 
+                end
+                op_mfhi: begin
+                   ALU_Result <= rHI;
+                end
+                op_mflo: begin
+                   ALU_Result <= rLO;
                 end
                 default: begin
                 end
