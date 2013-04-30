@@ -56,10 +56,19 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
     parameter op_shl  = 6;
     parameter op_jr   = 7;
     parameter op_xor1 = 8;
+    parameter op_lui  = 9;
+    parameter op_mult = 10;
+    parameter op_mfhi = 11;
+    parameter op_mflo = 12;
+    parameter op_add8 = 13;
+    parameter op_rbit = 14;
+    parameter op_rev  = 15;
+    parameter op_sadd = 16;
+    parameter op_ssub = 17;
 
     // Instruction formats
     parameter Instr_Format_R = 0;
-    parameter Instr_Format_I = 1;
+    parameter Instr_Format_Other  = 1;
     parameter Instr_Format_J = 2;
 
     reg         ALUorMEM, RegW, FetchDorI, Writing, REGorIMM;
@@ -73,9 +82,15 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
     wire [31:0] ALU_InA, ALU_InB;
     reg  [31:0] ALU_Result;
     reg  [31:0] ALU_Result_Save;
-    reg  [ 3:0] Op, OpSave;
+    reg  [ 4:0] Op, OpSave;
     wire [ 4:0] DR;
     reg  [ 2:0] State, nState;
+
+    // 7b variables
+    reg [31:0]rHI, rLO;
+    reg rHI_WEN, rLO_WEN;
+    reg [63:0] rMULT_Result;
+    wire wImmOp;
 
     initial
     begin
@@ -93,6 +108,12 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
         ALU_Result_Save = 0;
         Instr = 0;
         PC = 0;
+        // 7b vars
+        rHI = 0;
+        rLO = 0;
+        rMULT_Result = 0;
+        rHI_WEN = 0;
+        rLO_WEN = 0;
     end
 
     REG reg_file(CLK, RegW, DR, `SR1, `SR2, Reg_In, ReadReg1, ReadReg2, Reg_One_LSB);
@@ -100,16 +121,23 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
     assign Imm_Ext = (Instr[15]) ? {16'hFFFF, Instr[15:0]} : 
                                    {16'h0000, Instr[15:0]};
 
-    assign DR = (Format == Instr_Format_R) ? Instr[15:11] : Instr[20:16];
+    assign DR = (Format == Instr_Format_R) ? Instr[15:11] : 
+                (`OPCODE == `JAL) ? 5'd31 : Instr[20:16];
 
     assign ALU_InA = ReadReg1; 
     assign ALU_InB = (REGorIMM_Save) ? Imm_Ext : ReadReg2;
-    assign Reg_In  = (ALUorMEM_Save) ? Mem_Bus : ALU_Result_Save;
+    assign Reg_In  = (`OPCODE == `JAL) ? PC :
+                     (ALUorMEM_Save) ? Mem_Bus : ALU_Result_Save;
     assign Format  = (`OPCODE == 0)   ? Instr_Format_R : 
-                     ((`OPCODE == 2) ? Instr_Format_J : Instr_Format_I);
+                     ((`OPCODE == 2) ? Instr_Format_J :
+                     Instr_Format_Other);
+
+//    assign wImmOp = (`OPCODE == 
+
 
     assign Mem_Bus = (Writing) ? ReadReg2 : 32'dZ;
     assign Address = (FetchDorI) ? PC : ALU_Result_Save;
+
 
     always @(*) begin
         FetchDorI <= 0;
@@ -122,6 +150,9 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
         Op <= op_jr;
         REGorIMM <= 0;
         ALUorMEM <= 0;
+        rMULT_Result <= 0;
+        rHI_WEN <= 0;
+        rLO_WEN <= 0;
         case(State)
         0: begin
 				if(HALT) begin
@@ -168,27 +199,34 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                     `SLT: begin
                         Op <= op_slt;
                     end
+                    `MULT: begin
+                        Op <= op_mult;
+                    end
                     default: begin
                     end
                     endcase
                 end
-                Instr_Format_I: begin
-                    REGorIMM <= 1;
+                Instr_Format_Other: begin
                     case(`OPCODE)
                         `ADDI: begin
+                           REGorIMM <= 1;
                             Op <= op_add;
                         end
                         `ANDI: begin
+                            REGorIMM <= 1;
                             Op <= op_and1;
                         end
                         `ORI: begin
+                            REGorIMM <= 1;
                             Op <= op_or1;
                         end
                         `LW: begin
+                            REGorIMM <= 1;
                             Op <= op_add;
                             ALUorMEM <= 1;
                         end
                         `SW: begin
+                            REGorIMM <= 1;
                             Op <= op_add;
                         end
                         `BEQ: begin
@@ -198,6 +236,10 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                         `BNE: begin
                             Op <= op_sub;
                             REGorIMM <= 0;
+                        end
+                        `LUI: begin
+                            Op <= op_lui;
+                            REGorIMM <= 1;
                         end
                         default: begin
                         end
@@ -242,6 +284,12 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                 op_xor1: begin
                     ALU_Result <= ALU_InA ^ ALU_InB;
                 end
+                op_lui: begin
+                    ALU_Result <= ALU_InB << 16; 
+                end
+                op_mult: begin
+                   rMULT_Result = ALU_InA * ALU_InB; 
+                end
                 default: begin
                 end
             endcase
@@ -268,16 +316,26 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
             nState <= 2'd0;
             if((Format == Instr_Format_R) || (`OPCODE == `ADDI) 
                     || (`OPCODE == `ANDI) || (`OPCODE == `ORI)) begin
-                RegW <= 1;
+                if(`F_Code == `MULT) begin
+                   rHI_WEN <= 1;
+                   rLO_WEN <= 1;
+                end else begin
+                    RegW <= 1;
+                end
              end
              else if(`OPCODE == `SW) begin
                  CS <= 1;
                  WE <= 1;
                  Writing <= 1;
              end
-             else if(`OPCODE == `LW) begin
+             else if(`OPCODE == `LW || 
+                     `OPCODE == `LUI) begin
                  CS <= 1;
                  nState <= 4;
+             end
+             else if(`OPCODE == `JAL) begin
+                 nPC <= {PC[31:28], Instr[27:0]};
+                 RegW <= 1;
              end
              else begin
              end
@@ -305,6 +363,12 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
             State <= nState;
             PC <= nPC;
        
+       if(rHI_WEN) begin
+         rHI <= rMULT_Result[63:32];
+       end
+       if(rLO_WEN) begin
+        rLO <= rMULT_Result[31:0];
+       end
 		 case(State)
             0: begin
                 Instr <= Mem_Bus;
