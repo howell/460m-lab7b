@@ -121,8 +121,10 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
     assign Imm_Ext = (Instr[15]) ? {16'hFFFF, Instr[15:0]} : 
                                    {16'h0000, Instr[15:0]};
 
-    assign DR = (Format == Instr_Format_R) ? Instr[15:11] : 
-                (`OPCODE == `JAL) ? 5'd31 : Instr[20:16];
+    assign DR = (`OPCODE == `JAL) ? 5'd31 :
+                ((Format == Instr_Format_R) &&
+                 (`F_Code != `RBIT) && (`F_Code != `REV)) ?
+                Instr[15:11] : Instr[20:16];
 
     assign ALU_InA = ReadReg1; 
     assign ALU_InB = (REGorIMM_Save) ? Imm_Ext : ReadReg2;
@@ -207,6 +209,21 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                     end
                     `MFLO: begin
                         Op <= op_mflo;
+                    end
+                    `ADD8: begin
+                        Op <= op_add8;
+                    end
+                    `RBIT: begin
+                        Op <= op_rbit;
+                    end
+                    `REV: begin
+                        Op <= op_rev;
+                    end
+                    `SADD: begin
+                        Op <= op_sadd;
+                    end
+                    `SSUB: begin
+                        Op <= op_ssub;
                     end
                     default: begin
                     end
@@ -301,6 +318,21 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
                 end
                 op_mflo: begin
                    ALU_Result <= rLO;
+                end
+                op_add8: begin
+                    ALU_Result <= fADD8(ALU_InA, ALU_InB);
+                end
+                op_rbit: begin
+                    ALU_Result <= fRBIT(ALU_InA);
+                end
+                op_rev: begin
+                    ALU_Result <= fREV(ALU_InA);
+                end
+                op_sadd: begin
+                    ALU_Result <= fSADD(ALU_InA, ALU_InB);
+                end
+                op_ssub: begin
+                    ALU_Result <= fSSUB(ALU_InA, ALU_InB);
                 end
                 default: begin
                 end
@@ -400,5 +432,79 @@ module MIPS(CLK, RST, CS, WE, Address, Mem_Bus, HALT, Reg_One_LSB);
 		   end
 	
     end /* always */
+
+    // perform the byte-wise add on a word
+    function fADD8;
+        input [31:0] a, b;
+        reg [31:0] rResult;
+        begin
+            rResult[7:0]   = a[7:0]   + b[7:0];
+            rResult[15:8]  = a[15:8]  + b[15:8];
+            rResult[23:16] = a[23:16] + b[23:16];
+            rResult[31:24] = a[31:24] + b[31:24];
+            fADD8 = rResult;
+        end
+    endfunction // fADD8
+
+    // reverse the bits in a word
+    function fRBIT;
+        input [31:0] a;
+        reg [31:0] rResult;
+        integer i;
+
+        begin
+            for(i = 0; i < 32; i=i+1) begin
+                rResult[31-i] = a[i];
+            end
+            fRBIT = rResult;
+        end
+
+    endfunction // fRBIT
+
+    // reverse the bytes in a word
+    function fREV;
+        input [31:0] a;
+        reg [31:0] rResult;
+
+        begin
+            rResult[31:24] = a[7:0];
+            rResult[23:16] = a[15:8];
+            rResult[15:8]  = a[23:16];
+            rResult[7:0]   = a[31:24];
+            fREV = rResult;
+        end
+
+    endfunction // fREV
+
+    // perform a saturating addition on two words
+    function fSADD;
+        input [31:0] a, b;
+        reg [31:0] rResult;
+        reg rOverflow;
+
+        begin
+            rOverflow = 0;
+            {rOverflow, rResult} = a + b;
+            if(rOverflow) begin
+                rResult = 32'hFFFFFFFF;
+            end
+            fSADD = rResult;
+        end
+
+    endfunction // fSADD
+
+    // perform a saturating subtraction on two words, a - b
+    function fSSUB;
+        input [31:0] a, b;
+        reg [31:0] rResult;
+
+        begin
+            rResult = 0;
+            if(a > b) begin
+                rResult = a - b;
+            end
+            fSSUB = rResult;
+        end
+    endfunction // fSSUB
 
 endmodule /* two_input_mux */
